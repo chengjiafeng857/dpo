@@ -7,7 +7,7 @@ It provides two parallel pipelines for fair comparison and reproducibility:
 
 The goal is to **analyze and verify DPO behavior** by monitoring loss curves, reward margins, and convergence trends, demonstrating that the from-scratch version matches the Hugging Face implementation.
 
-## ✨ Features
+## Features
 - **Minimal & Readable Core:** only two files (`dpo_loss.py`, `batch_log_prob.py`) implement the full DPO logic.
 - **Response-only log-prob masking:** ensures accurate DPO loss computation.
 - **BF16 Autocast & W&B Logging:** efficient and reproducible experiments.
