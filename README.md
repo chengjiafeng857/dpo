@@ -2,7 +2,7 @@
 This project is to build **Direct Preference Optimization (DPO)** from scratch for study or research usage.
 
 There are two realized pipeline in this project
-* **written DPO**: implement dpo from scratch
+* **Written DPO**: implement dpo from scratch
 * **HuggingFcae DPO**: implement dpo by using huggingface pipeline
 
 Monitoring the dpo loss and reward margins to prove dpo running performance.
@@ -84,7 +84,7 @@ The dataset should contain the following fields:
 
 #### Truncation & Tokenization
 - Both `question` and `chosen/rejected` texts are **tokenized and truncated**   
-- For models such as **LLaMA** and **GPT**, which do not define a padding token, we set:
+- For models such as **Llama** and **GPT**, which do not define a padding token, 
 ```bash
   tokenizer.pad_token = tokenizer.eos_token
 ```
@@ -135,14 +135,33 @@ python hf_dpo_training.py --config config_dpo.yaml
 ---
 
 ### learning results
-Loss:
-<p align="center">
-  <img src="docs/loss.png" width="400">
-  <img src="docs/hf_loss.png" width="400">
-</p>
+### Loss
+<table>
+  <tr>
+    <th align="center">From-scratch (ours)</th>
+    <th align="center">HF-TRL baseline</th>
+  </tr>
+  <tr>
+    <td align="center"><img src="docs/loss.png" alt="loss (from-scratch)" width="95%"></td>
+    <td align="center"><img src="docs/hf_loss.png" alt="loss (HF-TRL)" width="95%"></td>
+  </tr>
+</table>
 
-reward_margin
-<p align="center">
-  <img src="docs/margin.png" width="400">
-  <img src="docs/hf_margin.png" width="400">
-</p>
+**Interpretation.** Both curves descend quickly at the beginning then stabilize at a low level, indicating stable convergence.  
+Our handwritten trainer matches the HF-TRL trend, which supports parity of the implementation.
+
+---
+
+### Reward Margin
+<table>
+  <tr>
+    <th align="center">From-scratch (ours)</th>
+    <th align="center">HF-TRL baseline</th>
+  </tr>
+  <tr>
+    <td align="center"><img src="docs/margin.png" alt="reward margin (from-scratch)" width="95%"></td>
+    <td align="center"><img src="docs/hf_margin.png" alt="reward margin (HF-TRL)" width="95%"></td>
+  </tr>
+</table>
+
+**Interpretation.** The reward margin `(adv_chosen − adv_rejected)` grows steadily and plateaus, showing the policy is increasingly preferring the chosen responses relative to the reference.
