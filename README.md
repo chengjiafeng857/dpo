@@ -42,7 +42,6 @@ The key idea of implementing DPO is to compute the DPO loss
 [*Direct Preference Optimization: Your Language Model is Secretly a Reward Model*](https://arxiv.org/abs/2305.18290).
 
 ```math
-\[
 \mathcal{L}_{\text{DPO}}(\pi_\theta;\,\pi_{\text{ref}})
 = - \mathbb{E}_{(x, y^+, y^-) \sim D}\!\left[
 \log \sigma\!\left(
@@ -53,23 +52,22 @@ The key idea of implementing DPO is to compute the DPO loss
 \right)
 \right)
 \right]
-\]
 ```
 
 where:
 
 | Symbol | Description |
 |:--|:--|
-| $$( \pi_\theta \)$$ | Policy model (target model being fine-tuned) |
-| \( \pi_{\text{ref}} \) | Frozen reference model |
-| \( D \) | Dataset of human preference pairs |
-| \( y^+ \) | Chosen (preferred) response |
-| \( y^- \) | Rejected (dispreferred) response |
-| \( \beta \) | Temperature-like hyperparameter controlling divergence strength |
+| $$\pi_\theta$$ | Policy model (target model being fine-tuned) |
+| $$\pi_{\text{ref}}$$ | Frozen reference model |
+| $$D$$ | Dataset of human preference pairs |
+| $$y^+$$ | Chosen (preferred) response |
+| $$y^-$$ | Rejected (dispreferred) response |
+| $$\beta$$ | Temperature-like hyperparameter controlling divergence strength |
 
-The coefficient \( \beta \) controls the trade-off between exploration and stability:
-- Small \( \beta \): conservative updates, model stays close to ref model.  
-- Large \( \beta \): stronger preference alignment but risk of overfitting. 
+The coefficient $$\beta$$ controls the trade-off between exploration and stability:
+- Small $$\beta$$: conservative updates, model stays close to ref model.  
+- Large $$\beta$$: stronger preference alignment but risk of overfitting. 
 
 ---
 
