@@ -136,14 +136,18 @@ python hf_dpo_training.py --config config_dpo.yaml
 
 ### learning results
 ### Loss
-<table>
+<table style="width:100%; table-layout:fixed;">
   <tr>
-    <th align="center">From-scratch (ours)</th>
-    <th align="center">HF-TRL baseline</th>
+    <th width="50%" align="center">From-scratch (ours)</th>
+    <th width="50%" align="center">HF-TRL baseline</th>
   </tr>
   <tr>
-    <td align="center"><img src="docs/loss.png" alt="loss (from-scratch)" width="90%"></td>
-    <td align="center"><img src="docs/hf_loss.png" alt="loss (HF-TRL)" width="95%"></td>
+    <td align="center" valign="middle">
+      <img src="docs/loss.png" alt="loss (from-scratch)" width="400">
+    </td>
+    <td align="center" valign="middle">
+      <img src="docs/hf_loss.png" alt="loss (HF-TRL)" width="400">
+    </td>
   </tr>
 </table>
 
@@ -153,14 +157,18 @@ Our handwritten trainer matches the HF-TRL trend, which supports parity of the i
 ---
 
 ### Reward Margin
-<table>
+<table style="width:100%; table-layout:fixed;">
   <tr>
-    <th align="center">From-scratch (ours)</th>
-    <th align="center">HF-TRL baseline</th>
+    <th width="50%" align="center">From-scratch (ours)</th>
+    <th width="50%" align="center">HF-TRL baseline</th>
   </tr>
   <tr>
-    <td align="center"><img src="docs/margin.png" alt="reward margin (from-scratch)" width="90%"></td>
-    <td align="center"><img src="docs/hf_margin.png" alt="reward margin (HF-TRL)" width="95%"></td>
+    <td align="center" valign="middle">
+      <img src="docs/margin.png" alt="reward margin (from-scratch)" width="400">
+    </td>
+    <td align="center" valign="middle">
+      <img src="docs/hf_margin.png" alt="reward margin (HF-TRL)" width="400">
+    </td>
   </tr>
 </table>
 
