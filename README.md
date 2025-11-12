@@ -38,29 +38,31 @@ Monitoring the dpo loss and reward margins to prove dpo running performance.
 ## Scratch Details
 
 ### DPO Loss
-The key idea of implementing dpo is to compute the dpo loss [Direct Preference Optimization: Your Language Model is Secretly a Reward Model](https://arxiv.org/abs/2305.18290). The dpo loss function is  
+The key idea of implementing DPO is to compute the DPO loss  
+[*Direct Preference Optimization: Your Language Model is Secretly a Reward Model*](https://arxiv.org/abs/2305.18290).
+
 \[
-\mathcal{L}_{\text{DPO}}(\pi_\theta; \pi_{\text{ref}}) 
-= - \mathbb{E}_{(x, y^+, y^-) \sim D} 
-\left[
-\log \sigma\left(
-\beta \left[
-\log \frac{\pi_\theta(y^+|x)}{\pi_{\text{ref}}(y^+|x)} 
-- 
-\log \frac{\pi_\theta(y^-|x)}{\pi_{\text{ref}}(y^-|x)}
-\right]
+\mathcal{L}_{\text{DPO}}(\pi_\theta;\,\pi_{\text{ref}})
+= - \mathbb{E}_{(x, y^+, y^-) \sim D}\!\left[
+\log \sigma\!\left(
+\beta \left(
+\log \frac{\pi_\theta(y^+ \mid x)}{\pi_{\text{ref}}(y^+ \mid x)}
+-
+\log \frac{\pi_\theta(y^- \mid x)}{\pi_{\text{ref}}(y^- \mid x)}
+\right)
 \right)
 \right]
 \]
 
 where:
+
 | Symbol | Description |
-|---------|--------------|
+|:--|:--|
 | \( \pi_\theta \) | Policy model (target model being fine-tuned) |
-| \( \pi_{\text{ref}} \) | Frozen reference model  |
+| \( \pi_{\text{ref}} \) | Frozen reference model |
 | \( D \) | Dataset of human preference pairs |
-| \( y^+ \) | chosen response |
-| \( y^- \) | rejected response |
+| \( y^+ \) | Chosen (preferred) response |
+| \( y^- \) | Rejected (dispreferred) response |
 | \( \beta \) | Temperature-like hyperparameter controlling divergence strength |
 
 The coefficient \( \beta \) controls the trade-off between exploration and stability:
