@@ -1,3 +1,6 @@
+<script type="text/javascript"
+  src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js">
+</script>
 # dpo-scratch
 This project is to build **Direct Preference Optimization (DPO)** from scratch for study or research usage.
 
@@ -41,6 +44,7 @@ Monitoring the dpo loss and reward margins to prove dpo running performance.
 The key idea of implementing DPO is to compute the DPO loss  
 [*Direct Preference Optimization: Your Language Model is Secretly a Reward Model*](https://arxiv.org/abs/2305.18290).
 
+$$
 \[
 \mathcal{L}_{\text{DPO}}(\pi_\theta;\,\pi_{\text{ref}})
 = - \mathbb{E}_{(x, y^+, y^-) \sim D}\!\left[
@@ -53,6 +57,7 @@ The key idea of implementing DPO is to compute the DPO loss
 \right)
 \right]
 \]
+$$
 
 where:
 
