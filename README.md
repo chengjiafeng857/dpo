@@ -1,11 +1,19 @@
 # dpo-scratch
-This project is to build **Direct Preference Optimization (DPO)** from scratch for study or research usage.
+This project implements **Direct Preference Optimization (DPO)** completely **from scratch** for research and study purposes.  
+It provides two parallel pipelines for fair comparison and reproducibility:
 
-There are two realized pipeline in this project
-* **Written DPO**: implement dpo from scratch
-* **HuggingFcae DPO**: implement dpo by using huggingface pipeline
+- **Handwritten DPO** — a minimal, fully transparent implementation built from the original DPO formulation.  
+- **Hugging Face DPO** — a baseline using the official TRL library (`trl.DPOTrainer`) for performance parity.
 
-Monitoring the dpo loss and reward margins to prove dpo running performance.
+The goal is to **analyze and verify DPO behavior** by monitoring loss curves, reward margins, and convergence trends, demonstrating that the from-scratch version matches the Hugging Face implementation.
+
+## ✨ Features
+- **Minimal & Readable Core:** only two files (`dpo_loss.py`, `batch_log_prob.py`) implement the full DPO logic.
+- **Response-only log-prob masking:** ensures accurate DPO loss computation.
+- **BF16 Autocast & W&B Logging:** efficient and reproducible experiments.
+- **Baseline Parity:** verified against `Hugging Face Pipeline` implementation.
+
+---
 
 ## Project Overview
 - **policy**: Llama 3.2-1B
@@ -25,7 +33,7 @@ Monitoring the dpo loss and reward margins to prove dpo running performance.
 │ ├── dataset_process.py # build train/eval dataset
 │ ├── training.py # dpo training
 │ ├── hf_dpo_training.py # huggingface dpo implementation pipeline
-| └── config_sft_dpo.yaml # config for our entire pipline
+| └── config_dpo.yaml # config for our entire pipline
 |
 ├── docs/ # figures and tables 
 |  
@@ -136,18 +144,14 @@ python hf_dpo_training.py --config config_dpo.yaml
 
 ### learning results
 ### Loss
-<table style="width:100%; table-layout:fixed;">
+<table>
   <tr>
-    <th width="50%" align="center">From-scratch (ours)</th>
-    <th width="50%" align="center">HF-TRL baseline</th>
+    <th align="center">DPO Scratch</th>
+    <th align="center">HF DPO</th>
   </tr>
   <tr>
-    <td align="center" valign="middle">
-      <img src="docs/loss.png" alt="loss (from-scratch)" width="400">
-    </td>
-    <td align="center" valign="middle">
-      <img src="docs/hf_loss.png" alt="loss (HF-TRL)" width="400">
-    </td>
+    <td align="center"><img src="docs/loss.png" alt="loss (from-scratch)" width="95%"></td>
+    <td align="center"><img src="docs/hf_loss.png" alt="loss (HF-TRL)" width="95%"></td>
   </tr>
 </table>
 
@@ -157,19 +161,20 @@ Our handwritten trainer matches the HF-TRL trend, which supports parity of the i
 ---
 
 ### Reward Margin
-<table style="width:100%; table-layout:fixed;">
+<table>
   <tr>
-    <th width="50%" align="center">From-scratch (ours)</th>
-    <th width="50%" align="center">HF-TRL baseline</th>
+    <th align="center">DPO Scratch</th>
+    <th align="center">HF DPO</th>
   </tr>
   <tr>
-    <td align="center" valign="middle">
-      <img src="docs/margin.png" alt="reward margin (from-scratch)" width="400">
-    </td>
-    <td align="center" valign="middle">
-      <img src="docs/hf_margin.png" alt="reward margin (HF-TRL)" width="400">
-    </td>
+    <td align="center"><img src="docs/margin.png" alt="reward margin (from-scratch)" width="95%"></td>
+    <td align="center"><img src="docs/hf_margin.png" alt="reward margin (HF-TRL)" width="95%"></td>
   </tr>
 </table>
 
 **Interpretation.** The reward margin `(adv_chosen − adv_rejected)` grows steadily and plateaus, showing the policy is increasingly preferring the chosen responses relative to the reference.
+
+
+## Reference
+- Rafailov et al. (2023). *Direct Preference Optimization: Your Language Model is Secretly a Reward Model.*  
+- Hugging Face TRL: https://github.com/huggingface/trl  
