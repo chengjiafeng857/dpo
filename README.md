@@ -142,7 +142,7 @@ python hf_dpo_training.py --config config_dpo.yaml
     <th align="center">HF-TRL baseline</th>
   </tr>
   <tr>
-    <td align="center"><img src="docs/loss.png" alt="loss (from-scratch)" width="95%"></td>
+    <td align="center"><img src="docs/loss.png" alt="loss (from-scratch)" width="90%"></td>
     <td align="center"><img src="docs/hf_loss.png" alt="loss (HF-TRL)" width="95%"></td>
   </tr>
 </table>
@@ -159,7 +159,7 @@ Our handwritten trainer matches the HF-TRL trend, which supports parity of the i
     <th align="center">HF-TRL baseline</th>
   </tr>
   <tr>
-    <td align="center"><img src="docs/margin.png" alt="reward margin (from-scratch)" width="95%"></td>
+    <td align="center"><img src="docs/margin.png" alt="reward margin (from-scratch)" width="90%"></td>
     <td align="center"><img src="docs/hf_margin.png" alt="reward margin (HF-TRL)" width="95%"></td>
   </tr>
 </table>
