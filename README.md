@@ -174,6 +174,7 @@ Our handwritten trainer matches the HF-TRL trend, which supports parity of the i
 
 **Interpretation.** The reward margin `(adv_chosen − adv_rejected)` grows steadily and plateaus, showing the policy is increasingly preferring the chosen responses relative to the reference.
 
+---
 
 ## Reference
 - Rafailov et al. (2023). *Direct Preference Optimization: Your Language Model is Secretly a Reward Model.*  
