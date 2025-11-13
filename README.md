@@ -140,7 +140,7 @@ python hf_dpo_training.py --config config_dpo.yaml
 | reward_accuracy | % where (adv_chosen > adv_rejected) |
 
 * reward_margin → separation strength between good/bad responses, larger is better. 
-* reward_accuracy the proportion of samples where the model assigns a higher score to the *chosen* response than *rejected* one
+* reward_accuracy the proportion of samples where the model assigns a higher score to the *chosen* than *rejected*.
 
 ---
 
@@ -157,7 +157,8 @@ python hf_dpo_training.py --config config_dpo.yaml
   </tr>
 </table>
 
-**Interpretation.** Both curves descend quickly at the beginning then stabilize at a low level, indicating stable convergence.  
+**Interpretation.** Both curves descend quickly at the beginning then stabilize at a low level, indicating stable convergence. 
+ 
 Our handwritten trainer matches the HF-TRL trend, which supports parity of the implementation.
 
 ---
