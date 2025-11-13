@@ -158,7 +158,7 @@ python hf_dpo_training.py --config config_dpo.yaml
 </table>
 
 **Interpretation.** Both curves descend quickly at the beginning then stabilize at a low level, indicating stable convergence. 
- 
+
 Our handwritten trainer matches the HF-TRL trend, which supports parity of the implementation.
 
 ---
@@ -175,7 +175,7 @@ Our handwritten trainer matches the HF-TRL trend, which supports parity of the i
   </tr>
 </table>
 
-**Interpretation.** The reward margin `(adv_chosen − adv_rejected)` grows steadily and plateaus, showing the policy is increasingly preferring the chosen responses relative to the reference.
+**Interpretation.** Both curves show the same upward-and-stable trend; the scratch version has larger reward margins.
 
 ---
 
