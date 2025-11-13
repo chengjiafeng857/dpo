@@ -137,8 +137,10 @@ python hf_dpo_training.py --config config_dpo.yaml
 |---------|--------------|
 | loss | DPO loss |
 | reward_margin | Mean (adv_chosen - adv_rejected) |
+| reward_accuracy | % where (adv_chosen > adv_rejected) |
 
 * reward_margin → separation strength between good/bad responses, larger is better. 
+* reward_accuracy the proportion of samples where the model assigns a higher score to the *chosen* response than *rejected* one
 
 ---
 
@@ -173,6 +175,22 @@ Our handwritten trainer matches the HF-TRL trend, which supports parity of the i
 </table>
 
 **Interpretation.** The reward margin `(adv_chosen − adv_rejected)` grows steadily and plateaus, showing the policy is increasingly preferring the chosen responses relative to the reference.
+
+---
+
+### Reward Accuracy
+<table>
+  <tr>
+    <th align="center">DPO Scratch</th>
+    <th align="center">HF DPO</th>
+  </tr>
+  <tr>
+    <td align="center"><img src="docs/accuracy.png" alt="reward margin (from-scratch)" width="95%"></td>
+    <td align="center"><img src="docs/hf_accuracy.png" alt="reward margin (HF-TRL)" width="95%"></td>
+  </tr>
+</table>
+
+**Interpretation.** The reward accuracy eventually aligns with the HF DPO and converges to ~1; early fluctuations are solely due to batch statistical noise.
 
 ---
 
