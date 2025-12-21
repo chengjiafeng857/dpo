@@ -20,7 +20,7 @@ def _sanitize_filename(value: str) -> str:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Smoke test for HH dataset processing.")
-    parser.add_argument("--split", default="train[:50]", help="HF split to load.")
+    parser.add_argument("--split", default="train", help="HF split to load.")
     parser.add_argument(
         "--output-dir",
         default="test-ouput/proccessed_data",
@@ -29,9 +29,22 @@ def main() -> int:
     args = parser.parse_args()
 
     dataset = load_dataset("Anthropic/hh-rlhf", split=args.split)
-    pairs = dp._build_hh_pairs(dataset)
-    if not pairs:
-        raise RuntimeError("No HH pairs produced from the dataset split.")
+    data = dp._build_hh_data(dataset, silent=False)
+    if not data:
+        raise RuntimeError("No HH data produced from the dataset split.")
+    for prompt, info in data.items():
+        responses = info.get("responses") or []
+        pairs = info.get("pairs") or []
+        sft_target = info.get("sft_target")
+        if not responses or not pairs:
+            raise RuntimeError(f"Missing responses or pairs for prompt: {prompt!r}")
+        if sft_target is None:
+            raise RuntimeError(f"Missing sft_target for prompt: {prompt!r}")
+        if sft_target not in responses:
+            raise RuntimeError(f"sft_target not in responses for prompt: {prompt!r}")
+        for chosen_idx, rejected_idx in pairs:
+            if chosen_idx >= len(responses) or rejected_idx >= len(responses):
+                raise RuntimeError(f"Pair index out of range for prompt: {prompt!r}")
 
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -39,9 +52,9 @@ def main() -> int:
     output_path = output_dir / f"hh_pairs_{split_tag}.json"
 
     with output_path.open("w", encoding="utf-8") as handle:
-        json.dump(pairs, handle, indent=2)
+        json.dump(data, handle, indent=2)
 
-    print(f"Wrote {len(pairs)} rows to {output_path}")
+    print(f"Wrote {len(data)} prompts to {output_path}")
     return 0
 
 

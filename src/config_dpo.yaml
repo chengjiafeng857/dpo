@@ -3,7 +3,7 @@ ref_name: meta-llama/Llama-3.2-1B
 precision: bf16
 
 dataset:
-  dataset_name: Intel/orca_dpo_pairs
+  dataset_name: Anthropic/hh-rlhf
   subset: train[:90%]
   val_ratio: 0.1
   seed: 42
@@ -17,6 +17,14 @@ dpo_training:
   learning_rate: 1e-6
   log_steps: 10
 
+sft_training:
+  enabled: true
+  epochs: 1
+  batch_size: 8
+  learning_rate: 1e-6
+  log_steps: 10
+  save_dir: ./logs/sft
+
 hf_dpo_training:
   epochs: 1
   batch_size: 8
@@ -25,6 +33,5 @@ hf_dpo_training:
   logging_steps: 10
   seed: 42
   save_dir: ./logs/hf_dpo
-
 
 

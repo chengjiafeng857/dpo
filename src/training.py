@@ -7,6 +7,7 @@ from tqdm import tqdm
 import random
 from transformers import AutoTokenizer, AutoModelForCausalLM, get_cosine_schedule_with_warmup
 from dataset_process import build_train_val
+from sft_training import train_sft
 from dpo_loss import dpo_loss
 from batch_log_prob import compute_batch_log_prob
 import wandb
@@ -80,14 +81,25 @@ def train():
                config=config)
 
     # load model and tokenizer
-    policy_name = config['policy_name']
-    ref_name = config['ref_name']
+    policy_name = config["policy_name"]
     policy = AutoModelForCausalLM.from_pretrained(policy_name).to(device)
     tok = AutoTokenizer.from_pretrained(policy_name)
     tok.padding_side = "right"
     if tok.pad_token_id is None:
         tok.pad_token = tok.eos_token
     policy.config.pad_token_id = tok.pad_token_id
+
+    sft_config = config.get("sft_training")
+    run_sft = bool(sft_config and sft_config.get("enabled", True))
+    if run_sft:
+        print("Running SFT before DPO training...")
+        train_sft(policy, tok, config, device)
+        sft_save_dir = sft_config.get("save_dir", "sft_model")
+        policy.save_pretrained(sft_save_dir)
+        tok.save_pretrained(sft_save_dir)
+        ref_name = sft_save_dir
+    else:
+        ref_name = config["ref_name"]
 
     ref_model = AutoModelForCausalLM.from_pretrained(ref_name).to(device)
     ref_model.config.pad_token_id = tok.pad_token_id
