@@ -9,6 +9,7 @@ from transformers import AutoTokenizer, AutoModelForCausalLM
 import wandb
 
 from dataset_process import build_sft_train_val
+from model_utils import resolve_torch_dtype
 
 
 def _torch_debug_info(device: str) -> dict:
@@ -87,6 +88,11 @@ def evaluate_sft(dataloader, policy, device, use_bf16):
 def train_sft(policy, tokenizer, config, device):
     policy.train()
     policy.requires_grad_(True)
+    if config.get("sft_training", {}).get("gradient_checkpointing", False):
+        if hasattr(policy, "gradient_checkpointing_enable"):
+            policy.gradient_checkpointing_enable()
+            if getattr(policy.config, "use_cache", None) is not None:
+                policy.config.use_cache = False
 
     train_loader, val_loader = build_sft_train_val(config=config, tokenizer=tokenizer)
     optimizer = AdamW(params=policy.parameters(), lr=float(config["sft_training"]["learning_rate"]))
@@ -151,7 +157,8 @@ def main():
     )
 
     policy_name = config["policy_name"]
-    policy = AutoModelForCausalLM.from_pretrained(policy_name).to(device)
+    torch_dtype = resolve_torch_dtype(config.get("precision"))
+    policy = AutoModelForCausalLM.from_pretrained(policy_name, torch_dtype=torch_dtype).to(device)
     tokenizer = AutoTokenizer.from_pretrained(policy_name)
     tokenizer.padding_side = "right"
     if tokenizer.pad_token_id is None:

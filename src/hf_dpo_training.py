@@ -3,6 +3,7 @@ from datasets import load_dataset
 from trl import DPOTrainer, DPOConfig
 import yaml
 import argparse
+from model_utils import resolve_torch_dtype
 
 # load yaml config
 def load_yaml_config(path):
@@ -28,12 +29,13 @@ def train():
 
     # load model and tokenizer
     policy_name = config['policy_name']
-    policy = AutoModelForCausalLM.from_pretrained(policy_name)
+    torch_dtype = resolve_torch_dtype(config.get("precision"))
+    policy = AutoModelForCausalLM.from_pretrained(policy_name, torch_dtype=torch_dtype)
     tok = AutoTokenizer.from_pretrained(policy_name)
     tok.pad_token = tok.eos_token
 
     ref_name = config['ref_name']
-    ref_model = AutoModelForCausalLM.from_pretrained(ref_name)
+    ref_model = AutoModelForCausalLM.from_pretrained(ref_name, torch_dtype=torch_dtype)
 
     # freeze ref_model params
     for param in ref_model.parameters():

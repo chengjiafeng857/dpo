@@ -11,6 +11,7 @@ from sft_training import train_sft
 from dpo_loss import dpo_loss
 from batch_log_prob import compute_batch_log_prob
 import wandb
+from model_utils import resolve_torch_dtype
 
 # load yaml config
 def load_yaml_config(path):
@@ -82,7 +83,8 @@ def train():
 
     # load model and tokenizer
     policy_name = config["policy_name"]
-    policy = AutoModelForCausalLM.from_pretrained(policy_name).to(device)
+    torch_dtype = resolve_torch_dtype(config.get("precision"))
+    policy = AutoModelForCausalLM.from_pretrained(policy_name, torch_dtype=torch_dtype).to(device)
     tok = AutoTokenizer.from_pretrained(policy_name)
     tok.padding_side = "right"
     if tok.pad_token_id is None:
@@ -101,7 +103,7 @@ def train():
     else:
         ref_name = config["ref_name"]
 
-    ref_model = AutoModelForCausalLM.from_pretrained(ref_name).to(device)
+    ref_model = AutoModelForCausalLM.from_pretrained(ref_name, torch_dtype=torch_dtype).to(device)
     ref_model.config.pad_token_id = tok.pad_token_id
     ref_model.requires_grad_(False)
     
@@ -118,7 +120,8 @@ def train():
     use_bf16 = config['precision'] == 'bf16'
 
     log_steps = config['dpo_training']['log_steps']
-    ref_model.to(dtype=torch.bfloat16)
+    if torch_dtype is not None:
+        ref_model.to(dtype=torch_dtype)
     
     # training loop
     epochs = config['dpo_training']['epochs']
