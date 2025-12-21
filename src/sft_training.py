@@ -11,6 +11,44 @@ import wandb
 from dataset_process import build_sft_train_val
 
 
+def _torch_debug_info(device: str) -> dict:
+    info = {
+        "torch_version": torch.__version__,
+        "torch_cuda_version": torch.version.cuda,
+        "torch_cudnn_version": torch.backends.cudnn.version(),
+        "torch_default_dtype": str(torch.get_default_dtype()),
+        "torch_num_threads": torch.get_num_threads(),
+        "torch_cuda_available": torch.cuda.is_available(),
+        "torch_device": device,
+        "torch_matmul_allow_tf32": torch.backends.cuda.matmul.allow_tf32,
+        "torch_cudnn_allow_tf32": torch.backends.cudnn.allow_tf32,
+        "torch_cudnn_deterministic": torch.backends.cudnn.deterministic,
+        "torch_cudnn_benchmark": torch.backends.cudnn.benchmark,
+    }
+    if torch.cuda.is_available():
+        device_idx = torch.cuda.current_device()
+        props = torch.cuda.get_device_properties(device_idx)
+        info.update(
+            {
+                "cuda_device_name": props.name,
+                "cuda_device_capability": f"{props.major}.{props.minor}",
+                "cuda_total_memory_gb": round(props.total_memory / (1024**3), 2),
+                "cuda_bf16_supported": getattr(torch.cuda, "is_bf16_supported", lambda: False)(),
+            }
+        )
+    return info
+
+
+def _log_cuda_memory(tag: str) -> dict:
+    if not torch.cuda.is_available():
+        return {}
+    return {
+        f"{tag}/cuda_mem_allocated_gb": round(torch.cuda.memory_allocated() / (1024**3), 3),
+        f"{tag}/cuda_mem_reserved_gb": round(torch.cuda.memory_reserved() / (1024**3), 3),
+        f"{tag}/cuda_max_mem_allocated_gb": round(torch.cuda.max_memory_allocated() / (1024**3), 3),
+    }
+
+
 def load_yaml_config(path):
     with open(path, "r") as handle:
         return yaml.safe_load(handle)
@@ -81,12 +119,18 @@ def train_sft(policy, tokenizer, config, device):
                 avg_loss = running_loss / log_steps
                 pbar.set_postfix(loss=f"{avg_loss:.3f}")
                 if wandb.run is not None:
-                    wandb.log({"sft/loss": avg_loss, "sft/epoch": epoch})
+                    wandb.log(
+                        {
+                            "sft/loss": avg_loss,
+                            "sft/epoch": epoch,
+                            **_log_cuda_memory("sft/train"),
+                        }
+                    )
                 running_loss = 0.0
 
         val_metrics = evaluate_sft(val_loader, policy, device, use_bf16)
         if wandb.run is not None:
-            wandb.log({"sft/epoch": epoch, **val_metrics})
+            wandb.log({"sft/epoch": epoch, **val_metrics, **_log_cuda_memory("sft/val")})
 
     return policy
 
@@ -113,6 +157,13 @@ def main():
     if tokenizer.pad_token_id is None:
         tokenizer.pad_token = tokenizer.eos_token
     policy.config.pad_token_id = tokenizer.pad_token_id
+
+    if wandb.run is not None:
+        debug_info = _torch_debug_info(device)
+        wandb.config.update(debug_info, allow_val_change=True)
+        watch_log = config.get("sft_training", {}).get("watch_log", "gradients")
+        watch_freq = config.get("sft_training", {}).get("watch_log_freq", 100)
+        wandb.watch(policy, log=watch_log, log_freq=watch_freq)
 
     train_sft(policy, tokenizer, config, device)
 
