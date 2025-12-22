@@ -1,6 +1,8 @@
 import argparse
 import inspect
 import random
+from typing import Any, cast
+
 import yaml
 import numpy as np
 import torch
@@ -48,9 +50,9 @@ def _torch_debug_info(device: str) -> dict:
     return info
 
 
-def load_yaml_config(path):
+def load_yaml_config(path: str) -> dict[str, Any]:
     with open(path, "r") as handle:
-        return yaml.safe_load(handle)
+        return cast(dict[str, Any], yaml.safe_load(handle))
 
 
 def random_controler(seed=42):
@@ -185,7 +187,7 @@ class LogFirstStepsCallback(TrainerCallback):
         return control
 
 
-def train_sft(policy, tokenizer, config, device):
+def train_sft(policy, tokenizer, config: dict[str, Any], device: str):
     policy.train()
     policy.requires_grad_(True)
     _sync_model_tokens_with_tokenizer(policy, tokenizer)
