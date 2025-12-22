@@ -3,7 +3,6 @@ import random
 import yaml
 import numpy as np
 import torch
-from torch.optim import AdamW
 from tqdm import tqdm
 from transformers import AutoTokenizer, AutoModelForCausalLM
 import wandb
@@ -71,11 +70,12 @@ def evaluate_sft(dataloader, policy, device, use_bf16):
     policy.eval()
     total_loss = 0.0
     n = 0
+    device_type = "cuda" if device == "cuda" else "cpu"
 
     with torch.no_grad():
         for batch in dataloader:
             batch = to_device_batch(batch, device)
-            with torch.cuda.amp.autocast(enabled=use_bf16, dtype=torch.bfloat16):
+            with torch.amp.autocast(device_type=device_type, enabled=use_bf16, dtype=torch.bfloat16):
                 outputs = policy(**batch)
                 loss = outputs.loss
             total_loss += loss.item()
@@ -95,7 +95,16 @@ def train_sft(policy, tokenizer, config, device):
                 policy.config.use_cache = False
 
     train_loader, val_loader = build_sft_train_val(config=config, tokenizer=tokenizer)
-    optimizer = AdamW(params=policy.parameters(), lr=float(config["sft_training"]["learning_rate"]))
+    try:
+        import bitsandbytes as bnb
+    except ImportError as exc:
+        raise RuntimeError(
+            "bitsandbytes is required for 8-bit AdamW. Install it (e.g. `uv pip install bitsandbytes`)."
+        ) from exc
+    optimizer = bnb.optim.AdamW8bit(
+        params=policy.parameters(),
+        lr=float(config["sft_training"]["learning_rate"]),
+    )
 
     use_bf16 = config["precision"] == "bf16"
     log_steps = config["sft_training"]["log_steps"]
@@ -109,10 +118,11 @@ def train_sft(policy, tokenizer, config, device):
             dynamic_ncols=True,
             leave=False,
         )
+        device_type = "cuda" if device == "cuda" else "cpu"
         running_loss = 0.0
         for step, batch in pbar:
             batch = to_device_batch(batch, device)
-            with torch.cuda.amp.autocast(enabled=use_bf16, dtype=torch.bfloat16):
+            with torch.amp.autocast(device_type=device_type, enabled=use_bf16, dtype=torch.bfloat16):
                 outputs = policy(**batch)
                 loss = outputs.loss
 
@@ -137,6 +147,10 @@ def train_sft(policy, tokenizer, config, device):
         val_metrics = evaluate_sft(val_loader, policy, device, use_bf16)
         if wandb.run is not None:
             wandb.log({"sft/epoch": epoch, **val_metrics, **_log_cuda_memory("sft/val")})
+        else:
+            print(
+                f"sft | epoch {epoch + 1}/{epochs} val_loss={val_metrics['sft/val_loss']:.4f}"
+            )
 
     return policy
 

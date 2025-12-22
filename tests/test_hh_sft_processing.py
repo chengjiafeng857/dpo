@@ -2,7 +2,9 @@ import os
 import sys
 from pathlib import Path
 
-os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+if "PYTORCH_CUDA_ALLOC_CONF" in os.environ:
+    os.environ.pop("PYTORCH_CUDA_ALLOC_CONF", None)
+os.environ.setdefault("PYTORCH_ALLOC_CONF", "expandable_segments:True")
 
 import torch
 import yaml
