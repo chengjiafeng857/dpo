@@ -6,16 +6,13 @@ if "PYTORCH_CUDA_ALLOC_CONF" in os.environ:
     os.environ.pop("PYTORCH_CUDA_ALLOC_CONF", None)
 os.environ.setdefault("PYTORCH_ALLOC_CONF", "expandable_segments:True")
 
-import torch
 import yaml
-from transformers import AutoModelForCausalLM, AutoTokenizer
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
 sys.path.insert(0, str(SRC))
 
-from sft_training import random_controler, train_sft
-from model_utils import resolve_torch_dtype
+from sft_training import main as sft_main
 
 
 def main() -> int:
@@ -25,28 +22,21 @@ def main() -> int:
     with config_path.open("r", encoding="utf-8") as handle:
         config = yaml.safe_load(handle)
 
-    config["dataset"]["subset"] = "train[:500]"
+    config["dataset"]["subset"] = "train[:5000]"
     config.setdefault("sft_training", {})["save_dir"] = "./logs/sft"
 
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    random_controler()
+    output_dir = ROOT / "test-output"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    test_config_path = output_dir / "config_dpo.yaml"
+    with test_config_path.open("w", encoding="utf-8") as handle:
+        yaml.safe_dump(config, handle, sort_keys=False)
 
-    policy_name = config["policy_name"]
-    torch_dtype = resolve_torch_dtype(config.get("precision"))
-    policy = AutoModelForCausalLM.from_pretrained(policy_name, torch_dtype=torch_dtype).to(device)
-    tokenizer = AutoTokenizer.from_pretrained(policy_name)
-    print(f"Loaded policy dtype: {next(policy.parameters()).dtype}")
-    tokenizer.padding_side = "right"
-    if tokenizer.pad_token_id is None:
-        tokenizer.pad_token = tokenizer.eos_token
-    policy.config.pad_token_id = tokenizer.pad_token_id
-
-    train_sft(policy, tokenizer, config, device)
-
-    save_dir = ROOT / "logs" / "sft"
-    save_dir.mkdir(parents=True, exist_ok=True)
-    policy.save_pretrained(save_dir)
-    tokenizer.save_pretrained(save_dir)
+    original_argv = sys.argv[:]
+    sys.argv = [str(SRC / "sft_training.py"), "--config", str(test_config_path)]
+    try:
+        sft_main()
+    finally:
+        sys.argv = original_argv
 
     print("HH SFT training test passed.")
     return 0

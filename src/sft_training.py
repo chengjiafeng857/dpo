@@ -1,13 +1,22 @@
 import argparse
+import inspect
 import random
 import yaml
 import numpy as np
 import torch
-from tqdm import tqdm
-from transformers import AutoTokenizer, AutoModelForCausalLM
+from datasets import Dataset, load_dataset
+from transformers import (
+    AutoTokenizer,
+    AutoModelForCausalLM,
+    Trainer,
+    TrainingArguments,
+    TrainerCallback,
+    default_data_collator,
+    set_seed,
+)
 import wandb
 
-from dataset_process import build_sft_train_val
+from dataset_process import _build_sft_records, _is_hh_dataset, _is_shp_dataset
 from model_utils import resolve_torch_dtype
 
 
@@ -39,16 +48,6 @@ def _torch_debug_info(device: str) -> dict:
     return info
 
 
-def _log_cuda_memory(tag: str) -> dict:
-    if not torch.cuda.is_available():
-        return {}
-    return {
-        f"{tag}/cuda_mem_allocated_gb": round(torch.cuda.memory_allocated() / (1024**3), 3),
-        f"{tag}/cuda_mem_reserved_gb": round(torch.cuda.memory_reserved() / (1024**3), 3),
-        f"{tag}/cuda_max_mem_allocated_gb": round(torch.cuda.max_memory_allocated() / (1024**3), 3),
-    }
-
-
 def load_yaml_config(path):
     with open(path, "r") as handle:
         return yaml.safe_load(handle)
@@ -62,97 +61,224 @@ def random_controler(seed=42):
     torch.backends.cudnn.deterministic = True
 
 
-def to_device_batch(batch, device):
-    return {k: (v.to(device) if torch.is_tensor(v) else v) for k, v in batch.items()}
+def _sync_model_tokens_with_tokenizer(model, tokenizer) -> None:
+    token_keys = ("pad_token_id", "bos_token_id", "eos_token_id")
+    for key in token_keys:
+        tok_value = getattr(tokenizer, key, None)
+        if hasattr(model.config, key):
+            setattr(model.config, key, tok_value)
+        if hasattr(model, "generation_config") and hasattr(model.generation_config, key):
+            setattr(model.generation_config, key, tok_value)
 
 
-def evaluate_sft(dataloader, policy, device, use_bf16):
-    policy.eval()
-    total_loss = 0.0
-    n = 0
-    device_type = "cuda" if device == "cuda" else "cpu"
+def _load_raw_sft_split(config):
+# We rewrite data loading logic here, to acomodate Trainer API, which expects a Dataset object.
+# This is a temporary workaround, we can factor a shared “load raw splits” helper in dataset_process.py that returns train_raw/eval_raw from build_sft_train_val.
+    dataset_name = config["dataset"]["dataset_name"]
+    subset = config["dataset"].get("subset", "train")
+    seed = config["dataset"].get("seed", 42)
+    eval_ratio = 0.05
 
-    with torch.no_grad():
-        for batch in dataloader:
-            batch = to_device_batch(batch, device)
-            with torch.amp.autocast(device_type=device_type, enabled=use_bf16, dtype=torch.bfloat16):
-                outputs = policy(**batch)
-                loss = outputs.loss
-            total_loss += loss.item()
-            n += 1
+    if _is_hh_dataset(dataset_name) or _is_shp_dataset(dataset_name):
+        dataset_id = "Anthropic/hh-rlhf" if _is_hh_dataset(dataset_name) else "stanfordnlp/SHP"
+        dataset_dict = load_dataset(dataset_id)
+        if isinstance(dataset_dict, dict):
+            if subset in dataset_dict:
+                train_raw = dataset_dict[subset]
+            else:
+                train_raw = load_dataset(dataset_id, split=subset)
+            if "test" in dataset_dict:
+                eval_raw = dataset_dict["test"]
+            elif "validation" in dataset_dict:
+                eval_raw = dataset_dict["validation"]
+            else:
+                split = train_raw.train_test_split(test_size=eval_ratio, seed=seed)
+                train_raw, eval_raw = split["train"], split["test"]
+        else:
+            split = dataset_dict.train_test_split(test_size=eval_ratio, seed=seed)
+            train_raw, eval_raw = split["train"], split["test"]
+    else:
+        raw = load_dataset(dataset_name, split=subset)
+        split = raw.train_test_split(test_size=eval_ratio, seed=seed)
+        train_raw, eval_raw = split["train"], split["test"]
 
-    policy.train()
-    return {"sft/val_loss": total_loss / max(n, 1)}
+    return train_raw, eval_raw, dataset_name
+
+
+def _build_sft_dataset(raw, dataset_name):
+    records = _build_sft_records(raw, dataset_name)
+    return Dataset.from_list(records)
+
+
+def _tokenize_sft_dataset(ds, tokenizer, max_len):
+    pad_token_id = tokenizer.pad_token_id if tokenizer.pad_token_id is not None else tokenizer.eos_token_id
+
+    def _tokenize(example):
+        prompt = example["prompt"]
+        sft_target = example["sft_target"]
+        truncation_mode = example.get("truncation_mode", "keep_start")
+
+        prompt_ids = tokenizer(prompt, add_special_tokens=False)["input_ids"]
+        target_ids = tokenizer(sft_target, add_special_tokens=False)["input_ids"]
+        if tokenizer.eos_token_id is not None:
+            target_ids = target_ids + [tokenizer.eos_token_id]
+
+        input_ids = prompt_ids + target_ids
+        labels = [-100] * len(prompt_ids) + target_ids
+
+        if len(input_ids) > max_len:
+            if truncation_mode == "keep_end":
+                input_ids = input_ids[-max_len:]
+                labels = labels[-max_len:]
+            else:
+                input_ids = input_ids[:max_len]
+                labels = labels[:max_len]
+
+        attention_mask = [1] * len(input_ids)
+        pad_len = max_len - len(input_ids)
+        if pad_len > 0:
+            input_ids = input_ids + [pad_token_id] * pad_len
+            attention_mask = attention_mask + [0] * pad_len
+            labels = labels + [-100] * pad_len
+
+        return {"input_ids": input_ids, "attention_mask": attention_mask, "labels": labels}
+
+    tokenized = ds.map(_tokenize, remove_columns=ds.column_names)
+    tokenized.set_format("torch")
+    return tokenized
+
+
+class MonitorCallback(TrainerCallback):
+    def __init__(self, tokenizer, prompts, max_new_tokens=128):
+        self.tokenizer = tokenizer
+        self.prompts = prompts
+        self.max_new_tokens = max_new_tokens
+
+    def on_evaluate(self, args, state, control, **kwargs):
+        if wandb.run is None:
+            return
+        model = kwargs.get("model")
+        if model is None:
+            return
+        table = wandb.Table(columns=["step", "prompt", "completion"])
+        model.eval()
+        for prompt in self.prompts:
+            inputs = self.tokenizer(prompt, return_tensors="pt").to(model.device)
+            with torch.no_grad():
+                outputs = model.generate(
+                    **inputs,
+                    max_new_tokens=self.max_new_tokens,
+                    do_sample=False,
+                )
+            text = self.tokenizer.decode(outputs[0], skip_special_tokens=True)
+            table.add_data(state.global_step, prompt, text)
+        wandb.log({"monitor": table}, step=state.global_step)
+
+
+class LogFirstStepsCallback(TrainerCallback):
+    def __init__(self, num_steps: int = 1):
+        self.num_steps = max(0, int(num_steps))
+
+    def on_step_end(self, args, state, control, **kwargs):
+        if self.num_steps > 0 and state.global_step <= self.num_steps:
+            control.should_log = True
+        return control
 
 
 def train_sft(policy, tokenizer, config, device):
     policy.train()
     policy.requires_grad_(True)
-    if config.get("sft_training", {}).get("gradient_checkpointing", False):
-        if hasattr(policy, "gradient_checkpointing_enable"):
-            policy.gradient_checkpointing_enable()
-            if getattr(policy.config, "use_cache", None) is not None:
-                policy.config.use_cache = False
+    _sync_model_tokens_with_tokenizer(policy, tokenizer)
 
-    train_loader, val_loader = build_sft_train_val(config=config, tokenizer=tokenizer)
-    try:
-        import bitsandbytes as bnb
-    except ImportError as exc:
-        raise RuntimeError(
-            "bitsandbytes is required for 8-bit AdamW. Install it (e.g. `uv pip install bitsandbytes`)."
-        ) from exc
-    optimizer = bnb.optim.AdamW8bit(
-        params=policy.parameters(),
-        lr=float(config["sft_training"]["learning_rate"]),
-    )
+    sft_config = config.get("sft_training", {})
+    gradient_checkpointing = sft_config.get("gradient_checkpointing", False)
+    if gradient_checkpointing and hasattr(policy, "gradient_checkpointing_enable"):
+        policy.gradient_checkpointing_enable()
+        if getattr(policy.config, "use_cache", None) is not None:
+            policy.config.use_cache = False
 
-    use_bf16 = config["precision"] == "bf16"
-    log_steps = config["sft_training"]["log_steps"]
-    epochs = config["sft_training"]["epochs"]
+    set_seed(config.get("dataset", {}).get("seed", 42))
+    train_raw, eval_raw, dataset_name = _load_raw_sft_split(config)
+    train_ds = _build_sft_dataset(train_raw, dataset_name)
+    eval_ds = _build_sft_dataset(eval_raw, dataset_name)
 
-    for epoch in range(epochs):
-        pbar = tqdm(
-            enumerate(train_loader),
-            total=len(train_loader),
-            desc=f"sft | epoch {epoch + 1}/{epochs}",
-            dynamic_ncols=True,
-            leave=False,
-        )
-        device_type = "cuda" if device == "cuda" else "cpu"
-        running_loss = 0.0
-        for step, batch in pbar:
-            batch = to_device_batch(batch, device)
-            with torch.amp.autocast(device_type=device_type, enabled=use_bf16, dtype=torch.bfloat16):
-                outputs = policy(**batch)
-                loss = outputs.loss
+    max_len = config["dataset"]["max_len"]
+    train_ds = _tokenize_sft_dataset(train_ds, tokenizer, max_len)
+    eval_ds = _tokenize_sft_dataset(eval_ds, tokenizer, max_len)
 
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
+    output_dir = sft_config.get("save_dir", "./logs/sft")
+    log_steps = max(1, int(sft_config.get("log_steps", 50)))
+    eval_steps = sft_config.get("eval_steps", log_steps)
+    eval_strategy = sft_config.get("evaluation_strategy") or sft_config.get("eval_strategy") or "steps"
 
-            running_loss += loss.item()
-            if (step + 1) % log_steps == 0:
-                avg_loss = running_loss / log_steps
-                pbar.set_postfix(loss=f"{avg_loss:.3f}")
-                if wandb.run is not None:
-                    wandb.log(
-                        {
-                            "sft/loss": avg_loss,
-                            "sft/epoch": epoch,
-                            **_log_cuda_memory("sft/train"),
-                        }
-                    )
-                running_loss = 0.0
+    training_kwargs = {
+        "output_dir": output_dir,
+        "per_device_train_batch_size": sft_config.get("batch_size", 8),
+        "per_device_eval_batch_size": sft_config.get("eval_batch_size", 8),
+        "gradient_accumulation_steps": sft_config.get("gradient_accumulation_steps", 8),
+        "eval_accumulation_steps": sft_config.get("eval_accumulation_steps", 30),
+        "dataloader_num_workers": sft_config.get("dataloader_num_workers", 0),
+        "num_train_epochs": sft_config.get("epochs", 1),
+        "learning_rate": float(sft_config.get("learning_rate", 2e-5)),
+        "bf16": True,
+        "optim": "adamw_bnb_8bit",
+        "lr_scheduler_type": "cosine",
+        "warmup_ratio": 0.03,
+        "eval_steps": eval_steps,
+        "save_strategy": "steps",
+        "save_steps": eval_steps,
+        "save_total_limit": 2,
+        "load_best_model_at_end": True,
+        "metric_for_best_model": "eval_loss",
+        "greater_is_better": False,
+        "logging_steps": log_steps,
+        "logging_first_step": True,
+        "report_to": ["wandb"] if wandb.run is not None else [],
+        "gradient_checkpointing": gradient_checkpointing,
+    }
+    args_params = inspect.signature(TrainingArguments).parameters
+    eval_key = "evaluation_strategy" if "evaluation_strategy" in args_params else "eval_strategy"
+    training_kwargs[eval_key] = eval_strategy
+    training_args = TrainingArguments(**training_kwargs)
 
-        val_metrics = evaluate_sft(val_loader, policy, device, use_bf16)
-        if wandb.run is not None:
-            wandb.log({"sft/epoch": epoch, **val_metrics, **_log_cuda_memory("sft/val")})
-        else:
-            print(
-                f"sft | epoch {epoch + 1}/{epochs} val_loss={val_metrics['sft/val_loss']:.4f}"
-            )
+    prompts = config.get("sft_training", {}).get("eval_prompts") or [
+        "Write a short helpful response about healthy sleep habits.",
+        "Explain why the sky appears blue in simple terms.",
+        "Give three tips for staying focused while studying.",
+    ]
+    if len(prompts) < 3:
+        prompts = (prompts + [
+            "Describe a simple recipe for scrambled eggs.",
+            "Summarize the idea of gravity in one paragraph.",
+            "What is a good way to start learning Python?",
+        ])[:3]
+    else:
+        prompts = prompts[:3]
 
-    return policy
+    max_new_tokens = config.get("sft_training", {}).get("eval_max_new_tokens", 128)
+
+    log_first_steps = sft_config.get("log_first_steps", 1)
+    callbacks = [MonitorCallback(tokenizer, prompts, max_new_tokens=max_new_tokens)]
+    if log_first_steps:
+        callbacks.insert(0, LogFirstStepsCallback(log_first_steps))
+
+    trainer_kwargs = {
+        "model": policy,
+        "args": training_args,
+        "train_dataset": train_ds,
+        "eval_dataset": eval_ds,
+        "data_collator": default_data_collator,
+        "callbacks": callbacks,
+    }
+    trainer_params = inspect.signature(Trainer).parameters
+    if "processing_class" in trainer_params:
+        trainer_kwargs["processing_class"] = tokenizer
+    else:
+        trainer_kwargs["tokenizer"] = tokenizer
+    trainer = Trainer(**trainer_kwargs)
+
+    trainer.train()
+    return trainer
 
 
 def main():
@@ -178,21 +304,19 @@ def main():
     if tokenizer.pad_token_id is None:
         tokenizer.pad_token = tokenizer.eos_token
     policy.config.pad_token_id = tokenizer.pad_token_id
+    _sync_model_tokens_with_tokenizer(policy, tokenizer)
 
     if wandb.run is not None:
         debug_info = _torch_debug_info(device)
         wandb.config.update(debug_info, allow_val_change=True)
-        watch_log = config.get("sft_training", {}).get("watch_log", "gradients")
-        watch_freq = config.get("sft_training", {}).get("watch_log_freq", 100)
-        wandb.watch(policy, log=watch_log, log_freq=watch_freq)
 
-    train_sft(policy, tokenizer, config, device)
+    trainer = train_sft(policy, tokenizer, config, device)
 
-    save_dir = config["sft_training"]["save_dir"]
-    policy.save_pretrained(save_dir)
-    tokenizer.save_pretrained(save_dir)
+    output_dir = config.get("sft_training", {}).get("save_dir", "./logs/sft")
+    trainer.save_model(output_dir)
+    tokenizer.save_pretrained(output_dir)
 
-    print(f"SFT model saved to {save_dir}")
+    print(f"SFT model saved to {output_dir}")
 
 
 if __name__ == "__main__":

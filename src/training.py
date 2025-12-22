@@ -95,10 +95,11 @@ def train():
     run_sft = bool(sft_config and sft_config.get("enabled", True))
     if run_sft:
         print("Running SFT before DPO training...")
-        train_sft(policy, tok, config, device)
+        trainer = train_sft(policy, tok, config, device)
         sft_save_dir = sft_config.get("save_dir", "sft_model")
-        policy.save_pretrained(sft_save_dir)
+        trainer.save_model(sft_save_dir)
         tok.save_pretrained(sft_save_dir)
+        policy = trainer.model
         ref_name = sft_save_dir
     else:
         ref_name = config["ref_name"]
