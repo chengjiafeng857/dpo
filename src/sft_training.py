@@ -23,6 +23,7 @@ from model_utils import resolve_torch_dtype
 
 
 def _torch_debug_info(device: str) -> dict:
+# Collect torch and cuda debug info for wandb logging
     info = {
         "torch_version": torch.__version__,
         "torch_cuda_version": torch.version.cuda,
@@ -51,6 +52,7 @@ def _torch_debug_info(device: str) -> dict:
 
 
 def load_yaml_config(path: str) -> dict[str, Any]:
+# Load YAML config file
     with open(path, "r") as handle:
         return cast(dict[str, Any], yaml.safe_load(handle))
 
@@ -64,6 +66,7 @@ def random_controler(seed=42):
 
 
 def _sync_model_tokens_with_tokenizer(model, tokenizer) -> None:
+# Ensure model config tokens are in sync with tokenizer tokens
     token_keys = ("pad_token_id", "bos_token_id", "eos_token_id")
     for key in token_keys:
         tok_value = getattr(tokenizer, key, None)
@@ -113,6 +116,9 @@ def _build_sft_dataset(raw, dataset_name):
 
 
 def _tokenize_sft_dataset(ds, tokenizer, max_len):
+# Tokenize SFT dataset with prompt masking in the labels, padding, and truncation.
+# This is a simplified version of process_sft_ds in dataset_process.py, adapted for Hugging Face Trainer.
+# The function returns a tokenized Dataset ready for training.
     pad_token_id = tokenizer.pad_token_id if tokenizer.pad_token_id is not None else tokenizer.eos_token_id
 
     def _tokenize(example):
@@ -151,6 +157,7 @@ def _tokenize_sft_dataset(ds, tokenizer, max_len):
 
 
 class MonitorCallback(TrainerCallback):
+# for logging to wandb during evaluation
     def __init__(self, tokenizer, prompts, max_new_tokens=128):
         self.tokenizer = tokenizer
         self.prompts = prompts
@@ -178,6 +185,7 @@ class MonitorCallback(TrainerCallback):
 
 
 class LogFirstStepsCallback(TrainerCallback):
+# for logging the first N training steps to wandb
     def __init__(self, num_steps: int = 1):
         self.num_steps = max(0, int(num_steps))
 
@@ -188,10 +196,13 @@ class LogFirstStepsCallback(TrainerCallback):
 
 
 def train_sft(policy, tokenizer, config: dict[str, Any], device: str):
+# Main training proccess, using the Trainer from Hugging Face Transformers.
+    # Ensure model is in training mode, safety check for switching from evaluation mode
     policy.train()
     policy.requires_grad_(True)
+# Ensure model tokens are in sync with tokenizer tokens
     _sync_model_tokens_with_tokenizer(policy, tokenizer)
-
+# Dataset preparation
     sft_config = config.get("sft_training", {})
     gradient_checkpointing = sft_config.get("gradient_checkpointing", False)
     if gradient_checkpointing and hasattr(policy, "gradient_checkpointing_enable"):
@@ -208,6 +219,7 @@ def train_sft(policy, tokenizer, config: dict[str, Any], device: str):
     train_ds = _tokenize_sft_dataset(train_ds, tokenizer, max_len)
     eval_ds = _tokenize_sft_dataset(eval_ds, tokenizer, max_len)
 
+# TrainingArguments
     output_dir = sft_config.get("save_dir", "./logs/sft")
     log_steps = max(1, int(sft_config.get("log_steps", 50)))
     eval_steps = sft_config.get("eval_steps", log_steps)
@@ -248,6 +260,7 @@ def train_sft(policy, tokenizer, config: dict[str, Any], device: str):
         "Explain why the sky appears blue in simple terms.",
         "Give three tips for staying focused while studying.",
     ]
+    # if no prompt is provided, use a few default prompts
     if len(prompts) < 3:
         prompts = (prompts + [
             "Describe a simple recipe for scrambled eggs.",
@@ -263,7 +276,7 @@ def train_sft(policy, tokenizer, config: dict[str, Any], device: str):
     callbacks = [MonitorCallback(tokenizer, prompts, max_new_tokens=max_new_tokens)]
     if log_first_steps:
         callbacks.insert(0, LogFirstStepsCallback(log_first_steps))
-
+# Trainer
     trainer_kwargs = {
         "model": policy,
         "args": training_args,
@@ -284,6 +297,7 @@ def train_sft(policy, tokenizer, config: dict[str, Any], device: str):
 
 
 def main():
+# Main function to run the SFT training process
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", type=str, required=True, help="Path to YAML config")
     args = parser.parse_args()
@@ -291,13 +305,13 @@ def main():
     config = load_yaml_config(args.config)
     device = "cuda" if torch.cuda.is_available() else "cpu"
     random_controler()
-
+# wandb init
     wandb.init(
         project=config.get("wandb_project", "handwritten-dpo"),
         name=config.get("run_name", "sft-run"),
         config=config,
     )
-
+# Load model and tokenizer
     policy_name = config["policy_name"]
     torch_dtype = resolve_torch_dtype(config.get("precision"))
     policy = AutoModelForCausalLM.from_pretrained(policy_name, torch_dtype=torch_dtype).to(device)
@@ -307,13 +321,13 @@ def main():
         tokenizer.pad_token = tokenizer.eos_token
     policy.config.pad_token_id = tokenizer.pad_token_id
     _sync_model_tokens_with_tokenizer(policy, tokenizer)
-
+# Log torch debug info to wandb
     if wandb.run is not None:
         debug_info = _torch_debug_info(device)
         wandb.config.update(debug_info, allow_val_change=True)
-
+# Run SFT training
     trainer = train_sft(policy, tokenizer, config, device)
-
+# Save model and tokenizer
     output_dir = config.get("sft_training", {}).get("save_dir", "./logs/sft")
     trainer.save_model(output_dir)
     tokenizer.save_pretrained(output_dir)
