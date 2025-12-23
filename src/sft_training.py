@@ -14,6 +14,7 @@ from transformers import (
     TrainingArguments,
     TrainerCallback,
     default_data_collator,
+    get_constant_schedule_with_warmup,
     set_seed,
 )
 import wandb
@@ -58,6 +59,7 @@ def load_yaml_config(path: str) -> dict[str, Any]:
 
 
 def random_controler(seed=42):
+# Set random seeds for reproducibility
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
     np.random.seed(seed)
@@ -117,9 +119,9 @@ def _build_sft_dataset(raw, dataset_name):
 
 def _tokenize_sft_dataset(ds, tokenizer, max_len):
 # Tokenize SFT dataset with prompt masking in the labels, padding, and truncation.
-# This is a simplified version of process_sft_ds in dataset_process.py, adapted for Hugging Face Trainer.
+# This is a temp simplified version of process_sft_ds in dataset_process.py, adapted for Hugging Face Trainer.
 # The function returns a tokenized Dataset ready for training.
-    pad_token_id = tokenizer.pad_token_id if tokenizer.pad_token_id is not None else tokenizer.eos_token_id
+    pad_token_id = tokenizer.pad_token_id if tokenizer.pad_token_id is not None else tokenizer.eos_token_id  #redundant for safe-check
 
     def _tokenize(example):
         prompt = example["prompt"]
@@ -156,52 +158,13 @@ def _tokenize_sft_dataset(ds, tokenizer, max_len):
     return tokenized
 
 
-class MonitorCallback(TrainerCallback):
-# for logging to wandb during evaluation
-    def __init__(self, tokenizer, prompts, max_new_tokens=128):
-        self.tokenizer = tokenizer
-        self.prompts = prompts
-        self.max_new_tokens = max_new_tokens
-
-    def on_evaluate(self, args, state, control, **kwargs):
-        if wandb.run is None:
-            return
-        model = kwargs.get("model")
-        if model is None:
-            return
-        table = wandb.Table(columns=["step", "prompt", "completion"])
-        model.eval()
-        for prompt in self.prompts:
-            inputs = self.tokenizer(prompt, return_tensors="pt").to(model.device)
-            with torch.no_grad():
-                outputs = model.generate(
-                    **inputs,
-                    max_new_tokens=self.max_new_tokens,
-                    do_sample=False,
-                )
-            text = self.tokenizer.decode(outputs[0], skip_special_tokens=True)
-            table.add_data(state.global_step, prompt, text)
-        wandb.log({"monitor": table}, step=state.global_step)
-
-
-class LogFirstStepsCallback(TrainerCallback):
-# for logging the first N training steps to wandb
-    def __init__(self, num_steps: int = 1):
-        self.num_steps = max(0, int(num_steps))
-
-    def on_step_end(self, args, state, control, **kwargs):
-        if self.num_steps > 0 and state.global_step <= self.num_steps:
-            control.should_log = True
-        return control
-
-
 def train_sft(policy, tokenizer, config: dict[str, Any], device: str):
-# Main training proccess, using the Trainer from Hugging Face Transformers.
+# Main training proccess, using Trainer from Hugging Face Transformers.
     # Ensure model is in training mode, safety check for switching from evaluation mode
     policy.train()
     policy.requires_grad_(True)
-# Ensure model tokens are in sync with tokenizer tokens
-    _sync_model_tokens_with_tokenizer(policy, tokenizer)
+    #redundant, already ran in main()
+    # _sync_model_tokens_with_tokenizer(policy, tokenizer)
 # Dataset preparation
     sft_config = config.get("sft_training", {})
     gradient_checkpointing = sft_config.get("gradient_checkpointing", False)
@@ -214,7 +177,7 @@ def train_sft(policy, tokenizer, config: dict[str, Any], device: str):
     train_raw, eval_raw, dataset_name = _load_raw_sft_split(config)
     train_ds = _build_sft_dataset(train_raw, dataset_name)
     eval_ds = _build_sft_dataset(eval_raw, dataset_name)
-
+# Tokenize datasets
     max_len = config["dataset"]["max_len"]
     train_ds = _tokenize_sft_dataset(train_ds, tokenizer, max_len)
     eval_ds = _tokenize_sft_dataset(eval_ds, tokenizer, max_len)
@@ -224,20 +187,26 @@ def train_sft(policy, tokenizer, config: dict[str, Any], device: str):
     log_steps = max(1, int(sft_config.get("log_steps", 50)))
     eval_steps = sft_config.get("eval_steps", log_steps)
     eval_strategy = sft_config.get("evaluation_strategy") or sft_config.get("eval_strategy") or "steps"
+    warmup_steps = int(sft_config.get("warmup_steps", 150))
 
     training_kwargs = {
         "output_dir": output_dir,
+        # multiplied by the number of GPUs
         "per_device_train_batch_size": sft_config.get("batch_size", 8),
         "per_device_eval_batch_size": sft_config.get("eval_batch_size", 8),
+        # Number of batches accumulated before one optimizer step.
+        # effective batch size = batch_size * gradient_accumulation_steps
         "gradient_accumulation_steps": sft_config.get("gradient_accumulation_steps", 8),
-        "eval_accumulation_steps": sft_config.get("eval_accumulation_steps", 30),
+        # enable "eval_accumulation_steps" for memory-efficient eval if needed
+        # "eval_accumulation_steps": sft_config.get("eval_accumulation_steps", 30),
         "dataloader_num_workers": sft_config.get("dataloader_num_workers", 0),
         "num_train_epochs": sft_config.get("epochs", 1),
         "learning_rate": float(sft_config.get("learning_rate", 2e-5)),
+        # bf16 for training computes
         "bf16": True,
-        "optim": "adamw_bnb_8bit",
-        "lr_scheduler_type": "cosine",
-        "warmup_ratio": 0.03,
+        # RMSprop default optimizer to align with Beta-DPO setup, done in the optimizer setup below.
+        # "optim": "rmsprop",
+        "warmup_steps": warmup_steps,
         "eval_steps": eval_steps,
         "save_strategy": "steps",
         "save_steps": eval_steps,
@@ -255,27 +224,11 @@ def train_sft(policy, tokenizer, config: dict[str, Any], device: str):
     training_kwargs[eval_key] = eval_strategy
     training_args = TrainingArguments(**training_kwargs)
 
-    prompts = config.get("sft_training", {}).get("eval_prompts") or [
-        "Write a short helpful response about healthy sleep habits.",
-        "Explain why the sky appears blue in simple terms.",
-        "Give three tips for staying focused while studying.",
-    ]
-    # if no prompt is provided, use a few default prompts
-    if len(prompts) < 3:
-        prompts = (prompts + [
-            "Describe a simple recipe for scrambled eggs.",
-            "Summarize the idea of gravity in one paragraph.",
-            "What is a good way to start learning Python?",
-        ])[:3]
-    else:
-        prompts = prompts[:3]
+    # Optimizer setup, RMSprop default optimizer to align with Beta-DPO.
+    optimizer = torch.optim.RMSprop(policy.parameters(), lr=training_args.learning_rate)
+    # Match Beta-DPO warmup-to-constant schedule.
+    scheduler = get_constant_schedule_with_warmup(optimizer, num_warmup_steps=warmup_steps)
 
-    max_new_tokens = config.get("sft_training", {}).get("eval_max_new_tokens", 128)
-
-    log_first_steps = sft_config.get("log_first_steps", 1)
-    callbacks = [MonitorCallback(tokenizer, prompts, max_new_tokens=max_new_tokens)]
-    if log_first_steps:
-        callbacks.insert(0, LogFirstStepsCallback(log_first_steps))
 # Trainer
     trainer_kwargs = {
         "model": policy,
@@ -283,7 +236,7 @@ def train_sft(policy, tokenizer, config: dict[str, Any], device: str):
         "train_dataset": train_ds,
         "eval_dataset": eval_ds,
         "data_collator": default_data_collator,
-        "callbacks": callbacks,
+        "optimizers": (optimizer, scheduler),
     }
     trainer_params = inspect.signature(Trainer).parameters
     if "processing_class" in trainer_params:
@@ -316,10 +269,12 @@ def main():
     torch_dtype = resolve_torch_dtype(config.get("precision"))
     policy = AutoModelForCausalLM.from_pretrained(policy_name, torch_dtype=torch_dtype).to(device)
     tokenizer = AutoTokenizer.from_pretrained(policy_name)
+# Set up tokenizer padding, if pad_id not in tokenizer, default to end-of-sequence token 
     tokenizer.padding_side = "right"
     if tokenizer.pad_token_id is None:
         tokenizer.pad_token = tokenizer.eos_token
     policy.config.pad_token_id = tokenizer.pad_token_id
+# Ensure model tokens are in sync with tokenizer tokens
     _sync_model_tokens_with_tokenizer(policy, tokenizer)
 # Log torch debug info to wandb
     if wandb.run is not None:
