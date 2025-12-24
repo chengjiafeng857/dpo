@@ -1,6 +1,8 @@
 import argparse
 import inspect
+import os
 import random
+from datetime import datetime
 from typing import Any, cast
 
 import yaml
@@ -12,7 +14,6 @@ from transformers import (
     AutoModelForCausalLM,
     Trainer,
     TrainingArguments,
-    TrainerCallback,
     default_data_collator,
     get_constant_schedule_with_warmup,
     set_seed,
@@ -132,7 +133,6 @@ def _tokenize_sft_dataset(ds, tokenizer, max_len):
         target_ids = tokenizer(sft_target, add_special_tokens=False)["input_ids"]
         if tokenizer.eos_token_id is not None:
             target_ids = target_ids + [tokenizer.eos_token_id]
-
         input_ids = prompt_ids + target_ids
         labels = [-100] * len(prompt_ids) + target_ids
 
@@ -204,9 +204,11 @@ def train_sft(policy, tokenizer, config: dict[str, Any], device: str):
         "learning_rate": float(sft_config.get("learning_rate", 2e-5)),
         # bf16 for training computes
         "bf16": True,
-        # RMSprop default optimizer to align with Beta-DPO setup, done in the optimizer setup below.
-        # "optim": "rmsprop",
-        "warmup_steps": warmup_steps,
+        # use RMSprop optimizer to align with Beta-DPO setup, recommand using AdamW-8bit for SFT.
+        "optim": "adamw_bnb_8bit",
+        # constent scheduler is used in Beta-DPO, but cosine is more common for SFT.
+        "lr_scheduler_type": "cosine",
+        "warmup_ratio": 0.03,
         "eval_steps": eval_steps,
         "save_strategy": "steps",
         "save_steps": eval_steps,
@@ -225,9 +227,9 @@ def train_sft(policy, tokenizer, config: dict[str, Any], device: str):
     training_args = TrainingArguments(**training_kwargs)
 
     # Optimizer setup, RMSprop default optimizer to align with Beta-DPO.
-    optimizer = torch.optim.RMSprop(policy.parameters(), lr=training_args.learning_rate)
+    # optimizer = torch.optim.RMSprop(policy.parameters(), lr=training_args.learning_rate)
     # Match Beta-DPO warmup-to-constant schedule.
-    scheduler = get_constant_schedule_with_warmup(optimizer, num_warmup_steps=warmup_steps)
+    # scheduler = get_constant_schedule_with_warmup(optimizer, num_warmup_steps=warmup_steps)
 
 # Trainer
     trainer_kwargs = {
@@ -236,7 +238,7 @@ def train_sft(policy, tokenizer, config: dict[str, Any], device: str):
         "train_dataset": train_ds,
         "eval_dataset": eval_ds,
         "data_collator": default_data_collator,
-        "optimizers": (optimizer, scheduler),
+        # "optimizers": (optimizer, scheduler),
     }
     trainer_params = inspect.signature(Trainer).parameters
     if "processing_class" in trainer_params:
@@ -283,7 +285,9 @@ def main():
 # Run SFT training
     trainer = train_sft(policy, tokenizer, config, device)
 # Save model and tokenizer
-    output_dir = config.get("sft_training", {}).get("save_dir", "./logs/sft")
+    base_output_dir = config.get("sft_training", {}).get("save_dir", "./logs/sft")
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    output_dir = os.path.join(base_output_dir, timestamp)
     trainer.save_model(output_dir)
     tokenizer.save_pretrained(output_dir)
 

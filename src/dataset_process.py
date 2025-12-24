@@ -319,7 +319,7 @@ def process_ds(batch, tokenizer, max_len):
     return out_batch
 
 def build_train_val(config, tokenizer):
-    """Create train/val DataLoaders with dataset-specific preprocessing."""
+    """Create train/val DataLoaders for DPO with dataset-specific preprocessing."""
     dataset_name = config['dataset']['dataset_name']
     if _is_hh_dataset(dataset_name) or _is_shp_dataset(dataset_name):
         train_split = config["dataset"].get("subset", "train")
