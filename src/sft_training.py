@@ -21,7 +21,7 @@ from transformers import (
 import wandb
 
 from dataset_process import _build_sft_records, _is_hh_dataset, _is_shp_dataset
-from model_utils import resolve_torch_dtype
+from model_utils import resolve_torch_dtype, load_model_and_tokenizer
 
 
 def _torch_debug_info(device: str) -> dict:
@@ -158,6 +158,29 @@ def _tokenize_sft_dataset(ds, tokenizer, max_len):
     return tokenized
 
 
+def _debug_sft_samples(raw_ds, tokenizer, max_len, sample_size=5) -> None:
+    if sample_size <= 0:
+        return
+    total = len(raw_ds)
+    if total == 0:
+        print("SFT debug: no samples to show.")
+        return
+    sample_size = min(sample_size, total)
+    indices = random.sample(range(total), sample_size)
+    raw_sample = raw_ds.select(indices)
+    tokenized_sample = _tokenize_sft_dataset(raw_sample, tokenizer, max_len)
+    print("SFT debug samples (raw + tokenized):")
+    for i, idx in enumerate(indices, start=1):
+        raw_item = raw_sample[i - 1]
+        tokenized_item = {
+            key: (value.tolist() if torch.is_tensor(value) else value)
+            for key, value in tokenized_sample[i - 1].items()
+        }
+        print(f"[sample {i}/{sample_size}] index={idx}")
+        print("raw:", raw_item)
+        print("tokenized:", tokenized_item)
+
+
 def train_sft(policy, tokenizer, config: dict[str, Any], device: str):
 # Main training proccess, using Trainer from Hugging Face Transformers.
     # Ensure model is in training mode, safety check for switching from evaluation mode
@@ -179,6 +202,11 @@ def train_sft(policy, tokenizer, config: dict[str, Any], device: str):
     eval_ds = _build_sft_dataset(eval_raw, dataset_name)
 # Tokenize datasets
     max_len = config["dataset"]["max_len"]
+    # debug samples
+    # debug_samples = int(sft_config.get("debug_samples", 5))
+    # debug_show_samples = sft_config.get("debug_show_samples", True)
+    # if debug_show_samples:
+    #     _debug_sft_samples(train_ds, tokenizer, max_len, sample_size=debug_samples)
     train_ds = _tokenize_sft_dataset(train_ds, tokenizer, max_len)
     eval_ds = _tokenize_sft_dataset(eval_ds, tokenizer, max_len)
 
@@ -187,7 +215,7 @@ def train_sft(policy, tokenizer, config: dict[str, Any], device: str):
     log_steps = max(1, int(sft_config.get("log_steps", 50)))
     eval_steps = sft_config.get("eval_steps", log_steps)
     eval_strategy = sft_config.get("evaluation_strategy") or sft_config.get("eval_strategy") or "steps"
-    warmup_steps = int(sft_config.get("warmup_steps", 150))
+    # warmup_steps = int(sft_config.get("warmup_steps", 150))
 
     training_kwargs = {
         "output_dir": output_dir,
@@ -226,7 +254,7 @@ def train_sft(policy, tokenizer, config: dict[str, Any], device: str):
     training_kwargs[eval_key] = eval_strategy
     training_args = TrainingArguments(**training_kwargs)
 
-    # Optimizer setup, RMSprop default optimizer to align with Beta-DPO.
+    # Optimizer setup, RMSprop optimizer to align with Beta-DPO.
     # optimizer = torch.optim.RMSprop(policy.parameters(), lr=training_args.learning_rate)
     # Match Beta-DPO warmup-to-constant schedule.
     # scheduler = get_constant_schedule_with_warmup(optimizer, num_warmup_steps=warmup_steps)
@@ -269,8 +297,13 @@ def main():
 # Load model and tokenizer
     policy_name = config["policy_name"]
     torch_dtype = resolve_torch_dtype(config.get("precision"))
-    policy = AutoModelForCausalLM.from_pretrained(policy_name, torch_dtype=torch_dtype).to(device)
-    tokenizer = AutoTokenizer.from_pretrained(policy_name)
+    local_model_path = config.get("local_model_path") or config.get("sft_training", {}).get("local_model_path")
+    policy, tokenizer = load_model_and_tokenizer(
+        policy_name,
+        torch_dtype=torch_dtype,
+        device=device,
+        local_path=local_model_path,
+    )
 # Set up tokenizer padding, if pad_id not in tokenizer, default to end-of-sequence token 
     tokenizer.padding_side = "right"
     if tokenizer.pad_token_id is None:
@@ -290,8 +323,15 @@ def main():
     output_dir = os.path.join(base_output_dir, timestamp)
     trainer.save_model(output_dir)
     tokenizer.save_pretrained(output_dir)
-
     print(f"SFT model saved to {output_dir}")
+
+    mount_base_dir = config.get("sft_training", {}).get("mount_save_dir") or config.get("mount_save_dir")
+    if mount_base_dir:
+        mount_output_dir = os.path.join(mount_base_dir, timestamp)
+        os.makedirs(mount_output_dir, exist_ok=True)
+        trainer.save_model(mount_output_dir)
+        tokenizer.save_pretrained(mount_output_dir)
+        print(f"SFT model also saved to {mount_output_dir}")
 
 
 if __name__ == "__main__":

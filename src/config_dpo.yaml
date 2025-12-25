@@ -1,6 +1,7 @@
-policy_name: Qwen/Qwen3-0.6B
-ref_name: Qwen/Qwen3-0.6B
+policy_name: Qwen/Qwen3-0.6B-Base
+ref_name: Qwen/Qwen3-0.6B-Base
 precision: bf16
+# local_model_path: /path/to/local/model
 
 dataset:
   dataset_name: Anthropic/hh-rlhf
@@ -32,6 +33,7 @@ sft_training:
   eval_accumulation_steps: 50
   # dataloader_num_workers: 4
   save_dir: ./logs/sft/qwen3-0.6b
+  mount_save_dir: /mnt/qwen3-0.6b-sft
   watch_log: gradients
   watch_log_freq: 100
 
