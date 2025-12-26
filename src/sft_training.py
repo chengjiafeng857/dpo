@@ -18,7 +18,7 @@ import argparse
 # ==========================================
 def parse_args():
     parser = argparse.ArgumentParser(description="SFT Training Script")
-    parser.add_argument("--model_name", type=str, default="gpt2", help="Base model to fine-tune")
+    parser.add_argument("--model_name", type=str, default="Qwen/Qwen2.5-0.5B-Instruct", help="Base model to fine-tune")
     parser.add_argument("--offset", type=int, default=1000, help="Number of samples to use")
     parser.add_argument("--lr", type=float, default=5e-5, help="Learning rate")
     parser.add_argument("--batch_size", type=int, default=2, help="Batch size")
@@ -55,12 +55,12 @@ def train():
     torch.manual_seed(args.seed)
 
     print(f"Loading model: {args.model_name}...")
-    tokenizer = AutoTokenizer.from_pretrained(args.model_name)
+    tokenizer = AutoTokenizer.from_pretrained(args.model_name, trust_remote_code=True)
     
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
-    model = AutoModelForCausalLM.from_pretrained(args.model_name).to(device)
+    model = AutoModelForCausalLM.from_pretrained(args.model_name, trust_remote_code=True).to(device)
 
     print("Preparing Dataset...")
     train_data = load_hh_dataset_sft("train", num_samples=args.offset)

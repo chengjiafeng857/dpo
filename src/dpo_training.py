@@ -16,7 +16,7 @@ import os
 # ==========================================
 def parse_args():
     parser = argparse.ArgumentParser(description="DPO Training Script")
-    parser.add_argument("--model_name", type=str, default="gpt2", help="Base model (or path to SFT model)")
+    parser.add_argument("--model_name", type=str, default="Qwen/Qwen2.5-0.5B-Instruct", help="Base model (or path to SFT model)")
     parser.add_argument("--offset", type=int, default=1000, help="Number of samples")
     parser.add_argument("--beta", type=float, default=0.1, help="DPO Beta")
     parser.add_argument("--lr", type=float, default=1e-5, help="Learning rate")
@@ -159,8 +159,8 @@ def train():
     print("Loading models...")
     # Load Pretrained Model (Policy)
     print(f"Loading model from: {args.model_name}")
-    policy_model = AutoModelForCausalLM.from_pretrained(args.model_name).to(device)
-    tokenizer = AutoTokenizer.from_pretrained(args.model_name)
+    policy_model = AutoModelForCausalLM.from_pretrained(args.model_name, trust_remote_code=True).to(device)
+    tokenizer = AutoTokenizer.from_pretrained(args.model_name, trust_remote_code=True)
     
     # GPT2 has no pad token by default
     if tokenizer.pad_token is None:
