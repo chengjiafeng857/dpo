@@ -139,12 +139,12 @@ def dpo_loss(policy_chosen_logps, policy_rejected_logps, ref_chosen_logps, ref_r
     # We want to maximize: sigmoid(beta * (pi_diff - ref_diff))
     logits = pi_logratios - ref_logratios
     
-    losses = -F.logsigmoid(CONFIG["beta"] * logits)
+    losses = -F.logsigmoid(beta * logits)
     
     # Also calculate standard 'chosen' and 'rejected' rewards for logging
     # The implicit reward in DPO is: beta * (log pi(y|x) - log ref(y|x))
-    chosen_rewards = CONFIG["beta"] * (policy_chosen_logps - ref_chosen_logps).detach()
-    rejected_rewards = CONFIG["beta"] * (policy_rejected_logps - ref_rejected_logps).detach()
+    chosen_rewards = beta * (policy_chosen_logps - ref_chosen_logps).detach()
+    rejected_rewards = beta * (policy_rejected_logps - ref_rejected_logps).detach()
     
     return losses.mean(), chosen_rewards.mean(), rejected_rewards.mean()
 
