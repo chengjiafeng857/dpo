@@ -209,7 +209,9 @@ def _truncate_sft_sequence(
 
 
 def process_sft_ds(batch, tokenizer, max_len):
-    """Tokenize SFT examples with prompt masking in the labels."""
+    """Tokenize SFT examples with prompt masking in the labels, padding, and truncation. 
+    Abandoned for now as HF Trainer needs data object not dataloader from build_sft_train_val, 
+    logic is implemented in sft_trainer.py"""
     input_ids_list = []
     attention_masks = []
     labels_list = []
@@ -254,7 +256,7 @@ def process_sft_ds(batch, tokenizer, max_len):
 
 
 def process_ds(batch, tokenizer, max_len):
-    """Tokenize a batch of preference pairs and compute prompt lengths."""
+    """Tokenize a batch of preference pairs for dpo and compute prompt lengths."""
     chosen, rejected, prompt_length = [], [], []
     for item in batch:
         # Extract prompt/chosen/rejected text in a consistent layout.
@@ -317,7 +319,7 @@ def process_ds(batch, tokenizer, max_len):
     return out_batch
 
 def build_train_val(config, tokenizer):
-    """Create train/val DataLoaders with dataset-specific preprocessing."""
+    """Create train/val DataLoaders for DPO with dataset-specific preprocessing."""
     dataset_name = config['dataset']['dataset_name']
     if _is_hh_dataset(dataset_name) or _is_shp_dataset(dataset_name):
         train_split = config["dataset"].get("subset", "train")
