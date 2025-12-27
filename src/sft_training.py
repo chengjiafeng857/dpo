@@ -203,10 +203,10 @@ def train_sft(policy, tokenizer, config: dict[str, Any], device: str):
 # Tokenize datasets
     max_len = config["dataset"]["max_len"]
     # debug samples
-    # debug_samples = int(sft_config.get("debug_samples", 5))
-    # debug_show_samples = sft_config.get("debug_show_samples", True)
-    # if debug_show_samples:
-    #     _debug_sft_samples(train_ds, tokenizer, max_len, sample_size=debug_samples)
+    debug_samples = int(sft_config.get("debug_samples", 5))
+    debug_show_samples = sft_config.get("debug_show_samples", True)
+    if debug_show_samples:
+        _debug_sft_samples(train_ds, tokenizer, max_len, sample_size=debug_samples)
     train_ds = _tokenize_sft_dataset(train_ds, tokenizer, max_len)
     eval_ds = _tokenize_sft_dataset(eval_ds, tokenizer, max_len)
 

@@ -154,3 +154,5 @@ test-output/
 test-ouput/
 logs/
 wandb/
+.hf_cache/
+sft_model_final/
